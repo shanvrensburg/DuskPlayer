@@ -23,6 +23,7 @@ let songPlaying = false;
 let playListVisible = false;
 let loading = false;
 let theme = 'dark';
+let saveInterval = null;
 
 let duration = '00:00';
 let timer = '00:00';
@@ -35,6 +36,7 @@ let offsetWidth;
 let shuffle = false;
 let mute = false;
 let slider = 100;
+let playbackSpeed = 1;
 
 storage.has('settings', function (error, hasKey) {
     if (error) throw error;
@@ -43,6 +45,7 @@ storage.has('settings', function (error, hasKey) {
             if (error) throw error;
             if (data.shuffle) shuffle = true;
             if (data.volume) slider = data.volume;
+            if (data.playbackSpeed) playbackSpeed = data.playbackSpeed;
         });
     }
 });
@@ -58,7 +61,7 @@ storage.has('path', function (error, hasKey) {
 });
 
 function setTheme(data) {
-    var icons = document.body.querySelectorAll('svg');
+    let icons = document.body.querySelectorAll('svg');
     if (data.theme == 'light') {
         theme = 'light';
         document.body.style.backgroundColor = '#F5F5F5';
@@ -93,7 +96,7 @@ storage.has('theme', function (error, hasKey) {
     }
 });
 
-var walkSync = function (dir, filelist) {
+let walkSync = function (dir, filelist) {
     files = fs.readdirSync(dir);
     filelist = filelist || [];
     files.forEach(function (file) {
@@ -117,7 +120,7 @@ var walkSync = function (dir, filelist) {
 };
 
 async function parseFiles(audioFiles) {
-    var titles = [];
+    let titles = [];
 
     loading = true;
 
@@ -125,9 +128,9 @@ async function parseFiles(audioFiles) {
         // await will ensure the metadata parsing is completed before we move on to the next file
         const metadata = await mm.parseFile(audioFile, { skipCovers: true });
         const stats = fs.statSync(audioFile);
-        var data = {};
-        var title = metadata.common.title;
-        var artist = metadata.common.artist;
+        let data = {};
+        let title = metadata.common.title;
+        let artist = metadata.common.artist;
         if (title) data.title = metadata.common.title;
         else data.title = audioFile.split(path.sep).slice(-1)[0];
         if (artist) data.artist = metadata.common.artist;
@@ -149,9 +152,9 @@ async function scanDir(filePath) {
         persistent: true
     });
 
-    var arr = walkSync(filePath);
-    var arg = {};
-    var names = await parseFiles(arr);
+    let arr = walkSync(filePath);
+    let arg = {};
+    let names = await parseFiles(arr);
 
     arg.files = arr;
     arg.path = filePath;
@@ -220,7 +223,7 @@ function sortDefault(arr, des = false) {
 
 ipc.on('sort-change', function (event, arg) {
     if (player) {
-        var index = player.playlist[player.index].index;
+        let index = player.playlist[player.index].index;
 
         if (arg.items[0].checked)
             player.playlist = sortByDate(player.playlist, arg.items[6].checked);
@@ -262,16 +265,16 @@ async function addSongToPlaylist(path) {
     if (player) {
         const metadata = await mm.parseFile(path, { skipCovers: true });
         const stats = fs.statSync(audioFile);
-        var data = {};
-        var title = metadata.common.title;
-        var artist = metadata.common.artist;
+        let data = {};
+        let title = metadata.common.title;
+        let artist = metadata.common.artist;
         if (title) data.title = metadata.common.title;
         else data.title = path.split(path.sep).slice(-1)[0];
         if (artist) data.artist = metadata.common.artist;
         else data.artist = '';
         data.modDate = stats.mtime;
 
-        var len = player.playlist.length;
+        let len = player.playlist.length;
 
         player.playlist.push({
             title: path,
@@ -287,7 +290,7 @@ async function addSongToPlaylist(path) {
 
 function removeSongFromPlaylist(path) {
     if (player) {
-        var remIndex = player.playlist.findIndex((x) => x.file == path);
+        let remIndex = player.playlist.findIndex((x) => x.file == path);
         if (remIndex != -1) {
             player.playlist.splice(remIndex, 1);
             player.randomArray = randomize(
@@ -301,9 +304,13 @@ function startPlayer(arg) {
     if (songPlaying) {
         player.pause();
         songPlaying = false;
+
+        if (saveInterval) {
+            clearInterval(saveInterval);
+        }
     }
     songList = arg;
-    var songArr = [];
+    let songArr = [];
 
     for (let i = 0; i < songList.files.length; i++) {
         songArr.push({
@@ -326,12 +333,24 @@ function startPlayer(arg) {
         if (hasKey) {
             storage.get('last-played', function (error, data) {
                 if (error) throw error;
-                var index = arg.files.indexOf(data.path);
+                let index = arg.files.indexOf(data.path);
+                let seekTime = null;
+
+                if (fs.existsSync(path.dirname(data.path) + '/progress.txt')) {
+                    fs.readFile(path.dirname(data.path) + '/progress.txt', 'utf8', function(error, data) {
+                        if (error) throw error;
+
+                        seekTime = JSON.parse(data).time 
+                    });
+                }
 
                 if (index != -1) {
-                    player = new Player(songArr, index);
+                    console.log('at 1')
+                    setTimeout(() => {
+                        player = new Player(songArr, index, seekTime);
+                    }, 300);
                 } else {
-                    player = new Player(songArr, 0);
+                    player = new Player(songArr, 0, seekTime);
                 }
 
                 getTags(player.playlist[player.index].file);
@@ -344,13 +363,13 @@ function startPlayer(arg) {
 }
 
 function getTags(audioFile) {
-    var titles = [];
+    let titles = [];
     const metadata = mm
         .parseFile(audioFile, { skipCovers: false })
         .then((metadata) => {
-            var title = metadata.common.title;
-            var artist = metadata.common.artist;
-            var album = metadata.common.album;
+            let title = metadata.common.title;
+            let artist = metadata.common.artist;
+            let album = metadata.common.album;
 
             if (title) trackName = title;
             else trackName = audioFile.split(path.sep).slice(-1)[0];
@@ -358,18 +377,18 @@ function getTags(audioFile) {
             else trackArtist = '';
             if (album) trackAlbum = album;
             else trackAlbum = '';
-            var img = document.getElementById('picture');
+            let img = document.getElementById('picture');
 
             if (metadata.common.picture) {
-                var picture = metadata.common.picture[0];
+                let picture = metadata.common.picture[0];
                 img.style.display = 'block';
                 img.src = `data:${
                     picture.format
                 };base64,${picture.data.toString('base64')}`;
                 img.addEventListener('load', function () {
                     if (theme == 'disco') {
-                        var vibrant = new Vibrant(img, 128, 3);
-                        var swatches = vibrant.swatches();
+                        let vibrant = new Vibrant(img, 128, 3);
+                        let swatches = vibrant.swatches();
                         if (swatches['DarkMuted'])
                             document.body.style.backgroundColor = swatches[
                                 'DarkMuted'
@@ -393,13 +412,28 @@ function getTags(audioFile) {
     return titles;
 }
 
-var seekToTime = function (event) {
+function saveProgress(fileDirectory, fileName, currentTimestamp) {
+    const data = {
+        time: currentTimestamp
+    };
+
+    fs.writeFile(`${fileDirectory}/progress.txt`, JSON.stringify(data), function(err) {
+        if (err) {
+            console.log(err);
+            return
+        }
+    });
+}
+
+let seekToTime = function (event) {
     player.seek(event.offsetX / offsetWidth);
 };
-var playPlaylistSong = function (index) {
+
+let playPlaylistSong = function (index) {
     player.skipTo(index);
 };
-var nextSong = function () {
+
+let nextSong = function () {
     if (shuffle) {
         player.skip('random-next');
     } else {
@@ -407,7 +441,12 @@ var nextSong = function () {
     }
     songPlaying = true;
 };
-var prevSong = function () {
+
+let jump = function (event) {
+    player.jump(event.detail)
+}
+
+let prevSong = function () {
     if (shuffle) {
         player.skip('random-prev');
     } else {
@@ -416,7 +455,7 @@ var prevSong = function () {
     songPlaying = true;
 };
 
-var showPlaylist = function () {
+let showPlaylist = function () {
     if (playListVisible) {
         playListVisible = false;
     } else {
@@ -424,17 +463,21 @@ var showPlaylist = function () {
     }
 };
 
-var playMusic = function () {
+let playMusic = function () {
     if (songPlaying) {
         player.pause();
         songPlaying = false;
+
+        if (saveInterval) {
+            clearInterval(saveInterval);
+        }
     } else {
         player.play();
         songPlaying = true;
     }
 };
 
-var toggleShuffle = function () {
+let toggleShuffle = function () {
     if (shuffle) {
         shuffle = false;
     } else {
@@ -449,7 +492,7 @@ var toggleShuffle = function () {
     );
 };
 
-var togglemute = function () {
+let togglemute = function () {
     if (mute) {
         mute = false;
         player.volume(slider / 100);
@@ -475,10 +518,24 @@ function randomize(array) {
     return array;
 }
 
-var Player = function (playlist, index) {
+function playbackRate(data) {
+    player.setPlaybackRate(data.detail);
+    playbackSpeed = data.detail;
+
+    storage.set(
+        'settings',
+        { playbackSpeed: data.detail, shuffle: shuffle, volume: slider },
+        function (error) {
+            if (error) throw error;
+        }
+    );
+}
+
+let Player = function (playlist, index, seekTime) {
     this.playlist = playlist;
     this.index = index;
     this.randomIndex = index;
+    this.seekTime = seekTime;
     this.randomArray = randomize(
         Array.from({ length: playlist.length }, (_, i) => i)
     );
@@ -486,11 +543,11 @@ var Player = function (playlist, index) {
 
 Player.prototype = {
     play: function (index) {
-        var self = this;
-        var sound;
+        let self = this;
+        let sound;
 
         index = typeof index === 'number' ? index : self.index;
-        var data = self.playlist[index];
+        let data = self.playlist[index];
 
         if (data.howl) {
             sound = data.howl;
@@ -510,29 +567,41 @@ Player.prototype = {
                     }
                 }
             });
+
+            if (this.seekTime) {
+                sound.seek(this.seekTime)
+            }
         }
 
         storage.set('last-played', { path: data.file }, function (error) {
             if (error) throw error;
         });
+
+        self.setPlaybackRate(playbackSpeed)
+
         sound.play();
+
+        saveInterval = setInterval(() => {
+            saveProgress(path.dirname(data.file), data.file, sound.seek())
+        }, 5000);
+
         getTags(data.file);
 
         self.index = index;
     },
 
     pause: function () {
-        var self = this;
+        let self = this;
 
-        var sound = self.playlist[self.index].howl;
+        let sound = self.playlist[self.index].howl;
 
         sound.pause();
     },
 
     skip: function (direction) {
-        var self = this;
+        let self = this;
 
-        var index = 0;
+        let index = 0;
         if (direction === 'prev') {
             index = self.index - 1;
             if (index < 0) {
@@ -561,12 +630,12 @@ Player.prototype = {
     },
 
     skipTo: function (index) {
-        var self = this;
+        let self = this;
 
         if (self.playlist[self.index].howl) {
             self.playlist[self.index].howl.stop();
         }
-        var data = self.playlist[index];
+        let data = self.playlist[index];
         index = this.playlist.findIndex((x) => x.index == index);
 
         if (!songPlaying) {
@@ -576,11 +645,11 @@ Player.prototype = {
     },
 
     step: function () {
-        var self = this;
+        let self = this;
 
-        var sound = self.playlist[self.index].howl;
+        let sound = self.playlist[self.index].howl;
 
-        var seek = sound.seek() || 0;
+        let seek = sound.seek() || 0;
         timer = self.formatTime(Math.round(seek));
         progress.style.width = ((seek / sound.duration()) * 100 || 0) + '%';
 
@@ -588,42 +657,75 @@ Player.prototype = {
             requestAnimationFrame(self.step.bind(self));
         }
     },
+
     formatTime: function (secs) {
-        var minutes = Math.floor(secs / 60) || 0;
-        var seconds = secs - minutes * 60 || 0;
+        let minutes = Math.floor(secs / 60) || 0;
+        let seconds = secs - minutes * 60 || 0;
 
         return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
     },
+
     volume: function (val) {
         Howler.volume(val);
     },
-    seek: function (time) {
-        var self = this;
 
-        var sound = self.playlist[self.index].howl;
+    seek: function (time) {
+        let self = this;
+
+        let sound = self.playlist[self.index].howl;
 
         if (sound.playing() || true) {
             sound.seek(sound.duration() * time);
             requestAnimationFrame(self.step.bind(self));
         }
+    },
+
+    jump: function (direction) {
+        const sound = this.playlist[this.index].howl;
+
+        if (sound) {
+            const currentSeek = sound.pause()._sounds[0]._seek;
+            const duration = sound.duration();
+
+            if (direction === 'back') {
+                const goTo = currentSeek - 30;
+
+                if (goTo >= 0) {
+                    sound.seek(goTo);
+                }
+            } else {
+                const goTo = currentSeek + 30;
+
+                if (goTo < duration) {
+                    sound.seek(goTo);
+                }
+            }
+
+            sound.play();
+        }
+    },
+
+    setPlaybackRate: function (speed) {
+        const sound = this.playlist[this.index].howl;
+        sound.rate(speed);
     }
 };
 
-var volumnUp = function () {
+let volumnUp = function () {
     if (slider !== 100) {
         slider = slider + 2;
         player.volume(slider / 100);
     }
 };
 
-var volumnDown = function () {
+let volumnDown = function () {
     if (slider !== 0) {
         slider = slider - 2;
         player.volume(slider / 100);
     }
 };
 
-var handleKeyboardPress = function (keycode) {
+let handleKeyboardPress = function (keycode) {
     switch (keycode) {
         case 'MediaPlayPause':
         case ' ':
@@ -697,9 +799,12 @@ $: if (player) {
 
                 <div class="col-md-12 text-center">
                     <PLaybackControls
+                        on:jump={jump}
                         on:prevSong={prevSong}
                         on:nextSong={nextSong}
                         on:playMusic={playMusic}
+                        on:playbackRate={playbackRate}
+                        {playbackSpeed}
                         {songPlaying} />
                 </div>
 
